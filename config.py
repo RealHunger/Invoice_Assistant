@@ -1,9 +1,9 @@
 # config.py
 # 百度 AI 密钥配置
 BAIDU_CONFIG = {
-    'APP_ID': '122001991',
-    'API_KEY': 'aE4bjyOR0B0JWQxhGvtMhTMh',
-    'SECRET_KEY': 'PCMvnAFiL1gXg2y2Q3q2LYjSFu02fZwU'
+    'APP_ID': '',
+    'API_KEY': '',
+    'SECRET_KEY': ''
 }
 
 # Poppler 路径配置
