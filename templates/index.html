@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>南大智能报销助手</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root { --nju-purple: #601986; --nju-gold: #c6a15b; }
+        body { background-color: #f4f7f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding-top: 40px; }
+        /* 队徽水印 */
+        body::before {
+            content: "";
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40vw;
+            height: 40vw;
+            max-width: 520px;
+            max-height: 520px;
+            background-image: url('/static/logo.png');
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            opacity: 0.06;
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        /* 卡片与阴影 */
+        .card { border: none; border-radius: 16px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.107); transition: transform 0.2s; }
+        .card-header { background-color: #fff; border-bottom: 1px solid #eee; border-radius: 16px 16px 0 0 !important; }
+        
+        /* 导航样式 */
+        .nav-pills .nav-link { color: #666; font-weight: 500; border-radius: 10px; padding: 10px 25px; }
+        .nav-pills .nav-link.active { background-color: var(--nju-purple); box-shadow: 0 4px 10px rgba(96, 25, 134, 0.3); }
+        
+        /* 按钮与交互 */
+        .btn-nju { background-color: var(--nju-purple); color: white; border: none; }
+        .btn-nju:hover { background-color: #4d146d; color: white; }
+        .btn-save { background-color: #333; color: white; }
+        
+        /* 状态标签 */
+        .status-badge { font-size: 0.75rem; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
+        
+        /* 文件预览标签 */
+        .file-tag { font-size: 0.75rem; background: #fff; border: 1px solid #dee2e6; color: #555; padding: 2px 10px; border-radius: 6px; margin: 2px; display: inline-block; }
+        
+        /* 详情区文字 */
+        .info-label { color: #999; font-size: 0.8rem; margin-bottom: 2px; }
+        .info-value { color: #333; font-weight: 500; font-size: 0.95rem; }
+        /* 透明卡片：让队徽能透出但保持内容可读（更透明以便队徽更明显） */
+        .card, .bg-white {
+            background-color: rgba(255, 255, 255, 0.493) !important;
+            backdrop-filter: blur(6px);
+        }
+        .card-header {
+            background-color: rgba(255,255,255,0.6) !important;
+        }
+        .file-tag { background: rgba(255,255,255,0.55) !important; }
+        .app-container { position: relative; z-index: 1; }
+
+        /* 1. 让父容器变成定位基准 */
+        #dropZone {
+            position: relative;
+            cursor: pointer;
+        }
+
+        /* 2. 让 input 铺满并隐形 */
+        #dropZone input[type="file"] {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0; /* 关键：彻底透明 */
+            cursor: pointer;
+            z-index: 10; /* 确保盖在图标和文字上方 */
+        }
+
+        /* 3. 增加鼠标悬停效果（可选，提升体验） */
+        #dropZone:hover {
+            border-color: var(--nju-purple) !important;
+            background-color: rgba(96, 25, 134, 0.05) !important;
+        }
+
+        /* 小型拖拽附件区样式 */
+        .attachment-drop-zone {
+            position: relative;
+            border: 2px dashed #dee2e6;
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            transition: all 0.3s;
+            background: rgba(255,255,255,0.5);
+        }
+        .attachment-drop-zone:hover {
+            border-color: var(--nju-purple);
+            background: rgba(96, 25, 134, 0.05);
+        }
+        .attachment-drop-zone input[type="file"] {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container app-container" style="max-width: 900px;">
+    <div class="text-center mb-5">
+        <h2 class="fw-bold" style="color: var(--nju-purple);">
+            <i class="bi bi-file-earmark-check-fill me-2"></i>南大鲸麟战队报销助手
+        </h2>
+        <p class="text-muted">自动识别发票、管理附件截图、一键归档打包</p>
+    </div>
+
+        <!-- flash messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="mb-3">
+                    {% for cat, msg in messages %}
+                        <div class="alert alert-{{ 'danger' if cat=='danger' else ('warning' if cat=='warning' else 'success') }} alert-dismissible fade show shadow-sm" role="alert">
+                            {% if cat == 'warning' %}
+                                <i class="bi bi-exclamation-octagon-fill me-2"></i><strong>注意：</strong>
+                            {% elif cat == 'success' %}
+                                <i class="bi bi-check-circle-fill me-2"></i>
+                            {% endif %}
+                            {{ msg }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+    <ul class="nav nav-pills mb-4 justify-content-center" id="pills-tab" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="pills-upload-tab" data-bs-toggle="pill" data-bs-target="#tab-upload" type="button">
+                <i class="bi bi-cloud-arrow-up me-2"></i>识别新发票
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="pills-list-tab" data-bs-toggle="pill" data-bs-target="#tab-list" type="button">
+                <i class="bi bi-folder2-open me-2"></i>发票仓库 (<span id="invoices-count">{{ invoices|length }}</span>)
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="pills-tabContent">
+        
+        <div class="tab-pane fade show active" id="tab-upload" role="tabpanel">
+            <div class="card p-4">
+                <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">垫付人姓名</label>
+                            <input type="text" name="payer" id="payer" class="form-control" placeholder="如：张三" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">学号</label>
+                            <input type="text" name="stu_id" id="stu_id" class="form-control" placeholder="如：DG21xxxxx" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">南大工行卡号</label>
+                            <input type="text" name="bank_card" id="bank_card" class="form-control" placeholder="19位工行卡号" required>
+                        </div>
+
+                        <div class="col-12 mt-4">
+                            <div class="p-3 bg-light rounded-3">
+                                <p class="mb-0 small text-primary fw-bold" data-bs-toggle="collapse" data-bs-target="#collapseKeys" style="cursor: pointer;">
+                                    <i class="bi bi-gear-fill me-1"></i> 百度 API 设置 (你正在使用队长的额度，若需使用个人额度请点击展开)
+                                </p>
+                                <div class="collapse mt-3" id="collapseKeys">
+                                    <div class="row g-2">
+                                        <div class="col-md-4"><input type="text" name="app_id" class="form-control form-control-sm" placeholder="AppID"></div>
+                                        <div class="col-md-4"><input type="text" name="api_key" class="form-control form-control-sm" placeholder="API Key"></div>
+                                        <div class="col-md-4"><input type="text" name="secret_key" class="form-control form-control-sm" placeholder="Secret Key"></div>
+                                    </div>
+                                    <div class="form-text mt-2 text-muted">留空则自动使用队长的额度。</div>
+                                    <div class="form-text mt-2 text-muted">
+                                        <a href="/baidu_tutorial" class="link-primary">申请百度 OCR (AppID/API Key/Secret Key)教程»</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12 mt-4 text-center">
+                            <div class="border border-2 border-dashed rounded-4 p-5 bg-white" id="dropZone">
+                                <i class="bi bi-file-earmark-pdf text-muted display-4"></i>
+                                <h6 class="mt-3">选择或拖拽发票文件(支持批量上传)</h6>
+                                <p class="small text-muted mb-4">支持 PDF 或常见的图片格式</p>
+                                <input type="file" name="invoice" accept=".pdf,image/*" multiple required>
+                            </div>
+                            <button type="submit" class="btn btn-nju w-100 py-3 mt-4 fw-bold shadow-sm">
+                                <i class="bi bi-lightning-charge-fill me-2"></i>开始批量识别并归档
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-list" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold mb-0">归档记录</h5>
+                <div class="d-flex gap-2"> 
+                    <a href="/download_all" class="btn btn-success btn-sm shadow-sm">
+                        <i class="bi bi-file-zip-fill me-1"></i>导出报销附件压缩包 (ZIP)
+                    </a>
+                    
+                    <form action="{{ url_for('clear_all') }}" method="post" class="d-inline" 
+                        onsubmit="return confirm('⚠️ 警告：这将永久删除数据库中所有记录以及 storage 文件夹下的所有发票文件！确认继续吗？');">
+                        <button type="submit" class="btn btn-outline-danger btn-sm shadow-sm">
+                            <i class="bi bi-trash-fill me-1"></i>一键清空记录
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            {% for inv in invoices %}
+            <div class="card mb-3" data-inv="{{ inv.id }}">
+                <div class="card-header d-flex justify-content-between align-items-center py-3">
+                    <div>
+                        {% if inv.has_pay and inv.has_order %}
+                        <span id="status-{{ inv.id }}" class="status-badge bg-success-subtle text-success border border-success">
+                            <i class="bi bi-check-circle-fill me-1"></i>资料齐全
+                        </span>
+                        {% else %}
+                        <span id="status-{{ inv.id }}" class="status-badge bg-danger-subtle text-danger border border-danger">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>缺少附件
+                        </span>
+                        {% endif %}
+                        <strong class="ms-2 text-dark">{{ inv.seller }}</strong>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <span class="me-3 fw-bold text-primary">¥{{ inv.total }}</span>
+                        <button class="btn btn-sm btn-outline-secondary rounded-pill px-3 me-2" data-bs-toggle="collapse" data-bs-target="#inv-{{ inv.id }}">详情</button>
+                        <a href="/delete/{{ inv.id }}" class="btn btn-sm btn-light text-danger rounded-circle delete-invoice" data-inv="{{ inv.id }}" title="删除发票（清理本地文件夹）">
+                            <i class="bi bi-trash3"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <div class="collapse" id="inv-{{ inv.id }}">
+                    <div class="card-body bg-light border-top">
+                        <div class="row g-4">
+                            <div class="col-md-7">
+                                <div class="p-3 bg-white rounded-4 border shadow-sm h-100">
+                                    <h6 class="fw-bold border-bottom pb-2 mb-3">
+                                        <i class="bi bi-list-ul me-1"></i>发票明细
+                                    </h6>
+                                    
+                                    {% if inv.items and inv.items|length > 0 %}
+                                    <div class="table-responsive mb-3" style="max-height: 200px; overflow-y: auto;">
+                                        <table class="table table-sm table-hover align-middle" style="font-size: 0.85rem;">
+                                            <thead class="table-light sticky-top">
+                                                <tr class="text-muted">
+                                                    <th>商品名称</th>
+                                                    <th>规格</th>
+                                                    <th class="text-primary">单价(含税)</th>
+                                                    <th>数量</th>
+                                                    <th class="text-end text-primary">金额(含税)</th> </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for item in inv.items %}
+                                                <tr>
+                                                    <td class="fw-bold text-truncate" style="max-width: 150px;">{{ item.name }}</td>
+                                                    <td><small class="text-muted">{{ item.spec or '-' }}</small></td>
+                                                    
+                                                    <td class="text-primary">
+                                                        ¥{{ item.price_in_tax if item.price_in_tax else item.price }}
+                                                    </td>
+                                                    
+                                                    <td>{{ item.quantity }}</td>
+                                                    
+                                                    <td class="text-end text-dark fw-bold">
+                                                        ¥{{ item.amount_in_tax if item.amount_in_tax else item.amount }}
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}
+                                    <div class="row g-3 mb-3">
+                                        <div class="col-6">
+                                            <p class="info-label">商品名称</p>
+                                            <p class="info-value mb-0 text-truncate">{{ inv.good_name or '未识别' }}</p>
+                                        </div>
+                                        <div class="col-6">
+                                            <p class="info-label">规格型号</p>
+                                            <p class="info-value mb-0 text-muted small">{{ inv.spec or '-' }}</p>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+
+                                    <div class="row g-3">
+                                        <div class="col-6">
+                                            <p class="info-label">发票号码</p>
+                                            <p class="info-value mb-0" style="font-family: monospace;">{{ inv.inv_num }}</p>
+                                        </div>
+                                        <div class="col-6">
+                                            <p class="info-label">开票日期</p>
+                                            <p class="info-value mb-0">{{ inv.date }}</p>
+                                        </div>
+                                        
+                                        <div class="col-12"><hr class="my-1 text-muted opacity-25"></div>
+                                        
+                                        <div class="col-12">
+                                            <p class="info-label">已包含文件（发票原件及附件）：</p>
+                                            <div id="files-container-{{ inv.id }}" class="d-flex flex-wrap gap-2 mt-1">
+                                                {% for file in inv.files_list %}
+                                                <div class="file-tag d-flex align-items-center shadow-sm">
+                                                    <i class="bi bi-file-earmark-image text-primary me-2"></i>
+                                                    <span class="file-name-text" title="{{ file.name }}">{{ file.name }}</span>
+                                                    
+                                                    <div class="btn-group ms-2">
+                                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 preview-btn" 
+                                                                data-sub="{{ file.sub }}" 
+                                                                data-name="{{ file.name }}" 
+                                                                title="预览">
+                                                            <i class="bi bi-eye"></i>
+                                                        </button>
+                                                        
+                                                        {% if not file.protected %}
+                                                        <form action="/delete_attachment/{{ inv.id }}" method="post" class="d-inline">
+                                                            <input type="hidden" name="filename" value="{{ file.name }}">
+                                                            <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" 
+                                                                    onclick="return confirm('确定删除该附件吗？')">
+                                                                <i class="bi bi-x"></i>
+                                                            </button>
+                                                        </form>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-5">
+                                <div class="p-3 bg-white rounded-4 border shadow-sm">
+                                    <h6 class="fw-bold border-bottom pb-2 mb-3">补充截图</h6>
+                                    <form action="/upload_extra/{{ inv.id }}" method="post" enctype="multipart/form-data">
+                                        
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-muted">订单截图</label>
+                                            <div class="attachment-drop-zone">
+                                                <i class="bi bi-cart-check text-muted"></i>
+                                                <p class="small mb-0 text-muted mt-1" id="label-order-{{ inv.id }}">点击或拖拽上传</p>
+                                                <input type="file" name="order_img" multiple 
+                                                    onchange="updateFileName(this, 'label-order-{{ inv.id }}')">
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-muted">支付截图</label>
+                                            <div class="attachment-drop-zone">
+                                                <i class="bi bi-credit-card-2-back text-muted"></i>
+                                                <p class="small mb-0 text-muted mt-1" id="label-pay-{{ inv.id }}">点击或拖拽上传</p>
+                                                <input type="file" name="pay_img" multiple 
+                                                    onchange="updateFileName(this, 'label-pay-{{ inv.id }}')">
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" class="btn btn-save btn-sm w-100 py-2">
+                                            <i class="bi bi-save me-1"></i>保存并重命名
+                                        </button>
+                                    </form>
+                                    </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            
+            {% if not invoices %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox text-muted display-1"></i>
+                <p class="text-muted mt-3">暂无归档记录，请先在上传页识别发票</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // 1. 自动记忆功能
+    const inputIds = ['payer', 'stu_id', 'bank_card'];
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        // 恢复数据
+        inputIds.forEach(id => {
+            const savedValue = localStorage.getItem(id);
+            const el = document.getElementById(id);
+            if (savedValue && el) el.value = savedValue;
+        });
+
+        // 处理 URL 参数 open
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const open = params.get('open');
+            if (open) {
+                const listTabBtn = document.getElementById('pills-list-tab');
+                if (listTabBtn) listTabBtn.click();
+                setTimeout(() => {
+                    const el = document.getElementById(open);
+                    if (el) {
+                        const bsCollapse = new bootstrap.Collapse(el, {toggle: false});
+                        bsCollapse.show();
+                        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    }
+                }, 250);
+            }
+        } catch (e) { console.error(e); }
+
+        // --- 新增：操作成功提示自动消失逻辑 ---
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach((alert) => {
+            // 3秒后自动关闭
+            let timer = setTimeout(() => {
+                bootstrap.Alert.getOrCreateInstance(alert).close();
+            }, 3000);
+
+            // 鼠标悬停时停止计时，离开后重新计时（防止用户没看清）
+            alert.addEventListener('mouseenter', () => clearTimeout(timer));
+            alert.addEventListener('mouseleave', () => {
+                timer = setTimeout(() => {
+                    bootstrap.Alert.getOrCreateInstance(alert).close();
+                }, 1500);
+            });
+        });
+        // ------------------------------------
+
+        // 异步删除附件
+        const delForms = Array.from(document.querySelectorAll('form[action^="/delete_attachment/"]'));
+        delForms.forEach(form => {
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const btn = form.querySelector('button[type="submit"]');
+                const fileTag = form.closest('.file-tag');
+                btn.disabled = true;
+                const original = btn.innerHTML;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+                try {
+                    const formData = new FormData(form);
+                    const resp = await fetch(form.action, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const j = await resp.json();
+                    if (j && j.ok) {
+                        if (fileTag) {
+                            fileTag.style.transition = 'opacity 0.25s, height 0.25s';
+                            fileTag.style.opacity = '0';
+                            setTimeout(() => fileTag.remove(), 300);
+                        }
+                        // 更新状态图标
+                        const card = form.closest('.card');
+                        const invId = card ? card.dataset.inv : null;
+                        const statusEl = invId ? document.getElementById('status-' + invId) : null;
+                        if (statusEl) {
+                            if (j.has_pay && j.has_order) {
+                                statusEl.className = 'status-badge bg-success-subtle text-success border border-success';
+                                statusEl.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>资料齐全';
+                            } else {
+                                statusEl.className = 'status-badge bg-danger-subtle text-danger border border-danger';
+                                statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>缺少附件';
+                            }
+                        }
+                    }
+                } catch (err) { console.error(err); }
+            });
+        });
+
+        // 异步删除发票条目
+        const delInvLinks = Array.from(document.querySelectorAll('a.delete-invoice'));
+        delInvLinks.forEach(link => {
+            link.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (!confirm('删除后将同时清理本地文件夹，确认吗？')) return;
+                const href = link.href;
+                const card = link.closest('.card');
+                const original = link.innerHTML;
+                link.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                try {
+                    const resp = await fetch(href, { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    const j = await resp.json();
+                    if (j && j.ok) {
+                        if (card) {
+                            card.style.transition = 'opacity 0.25s, height 0.25s';
+                            card.style.opacity = '0';
+                            setTimeout(() => {
+                                card.remove();
+                                const cnt = document.getElementById('invoices-count');
+                                if (cnt) cnt.textContent = Math.max(0, parseInt(cnt.textContent) - 1);
+                            }, 300);
+                        }
+                    } else {
+                        alert('删除失败');
+                        link.innerHTML = original;
+                    }
+                } catch (err) {
+                    alert('请求失败');
+                    link.innerHTML = original;
+                }
+            });
+        });
+
+        // 预览按钮逻辑
+        document.querySelectorAll('.preview-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const sub = btn.dataset.sub || '';
+                const name = btn.dataset.name || '';
+                const card = btn.closest('.card');
+                const inv = card ? card.dataset.inv : null;
+                if (!inv) return;
+                const url = '/preview_attachment/' + inv + '?subfolder=' + encodeURIComponent(sub) + '&filename=' + encodeURIComponent(name);
+                window.open(url, '_blank');
+            });
+        });
+    });
+
+    // 上传表单提交记忆
+    document.getElementById('uploadForm').onsubmit = function() {
+        const btn = this.querySelector('button[type="submit"]');
+        const fileCount = this.querySelector('input[name="invoice"]').files.length;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>正在处理 ${fileCount} 张发票...`;
+        btn.disabled = true;
+        inputIds.forEach(id => {
+            localStorage.setItem(id, document.getElementById(id).value);
+        });
+    };
+
+    // 文件选择反馈
+    document.querySelector('input[name="invoice"]').addEventListener('change', function(e) {
+        const fileCount = e.target.files.length;
+        const titleObj = document.querySelector('#dropZone h6');
+        if (fileCount > 0) {
+            titleObj.innerHTML = `<i class="bi bi-check-circle-fill text-success"></i> 已准备好 ${fileCount} 个文件`;
+        }
+    });
+
+    // 更新附件上传区的文件显示文字
+    function updateFileName(input, labelId) {
+        const label = document.getElementById(labelId);
+        const files = input.files;
+        if (files.length > 0) {
+            label.innerHTML = `<span class="text-primary fw-bold"><i class="bi bi-file-earmark-plus"></i> 已选 ${files.length} 个文件</span>`;
+        } else {
+            label.innerText = "点击或拖拽上传";
+        }
+    }
+</script>
+</body>
+</html>
