@@ -13,7 +13,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = os.environ.get('FLASK_SECRET', 'devsecret')
 db = SQLAlchemy(app)
 
-# --- 关键：文件名清理函数，防止星号等非法字符报错 ---
+# 防止星号等非法字符报错
 def clean_path_name(name):
     return re.sub(r'[\\/:*?"<>|]', "_", name)
 
@@ -81,7 +81,6 @@ def save_items_from_words(inv, words):
         try:
             raw_amt = float(amounts[i].replace(',', '')) if i < len(amounts) and amounts[i] else 0.0
             raw_tax = float(taxes[i].replace(',', '')) if i < len(taxes) and taxes[i] else 0.0
-            # 数量清理
             q_str = nums[i].replace(',', '') if i < len(nums) and nums[i] else ''
             raw_qty = float(q_str) if q_str.replace('.','',1).isdigit() else 0.0
         except:
@@ -89,7 +88,7 @@ def save_items_from_words(inv, words):
 
         total_with_tax = raw_amt + raw_tax
         
-        # --- 关键逻辑：若无数量，单价 = 总额 ---
+        # 若无数量，单价 = 总额
         if raw_qty != 0:
             final_price = total_with_tax / raw_qty
         else:
@@ -134,7 +133,7 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    # 1. 获取文件列表支持批量上传
+    # 获取文件列表支持批量上传
     files = request.files.getlist('invoice')
     if not files or all(f.filename == '' for f in files):
         flash('请选择发票文件进行上传', 'warning')
@@ -157,7 +156,7 @@ def upload():
         file.save(temp_path)
         
         try:
-            # --- PDF 转图片 ---
+            # PDF 转图片
             if file.filename.lower().endswith('.pdf'):
                 images = convert_from_path(temp_path, dpi=200, poppler_path=POPPLER_PATH)
                 buf = io.BytesIO()
@@ -167,7 +166,7 @@ def upload():
                 with open(temp_path, 'rb') as f:
                     image_data = f.read()
 
-            # --- 调用百度 OCR ---
+            # 调用百度 OCR
             res = client.vatInvoice(image_data)
             if 'error_code' in res:
                 flash(f"文件 {file.filename} 识别错误: {res.get('error_msg')}", 'danger')
@@ -178,7 +177,7 @@ def upload():
                 flash(f'文件 {file.filename} 识别失败：非标准发票', 'warning')
                 continue
 
-           # --- 提取信息 ---
+           # 提取信息
             def extract_val(dct, key):
                 v = dct.get(key)
                 if isinstance(v, list): v = v[0] if v else None
@@ -189,7 +188,7 @@ def upload():
             if inv_num: inv_num = inv_num.strip()
             if inv_code: inv_code = inv_code.strip()
 
-            # ======= 新增：查重逻辑 =======
+            # 查重逻辑
             if inv_num and inv_code:
                 existing = Invoice.query.filter_by(inv_num=inv_num, inv_code=inv_code).first()
                 if existing:
@@ -198,35 +197,34 @@ def upload():
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
                     continue
-            # =============================
 
-            # 之前的 inv_num 赋默认值逻辑移动到查重之后，防止误判
+
             inv_num = inv_num or '未知号码'
             g_name = data.get('CommodityName', [{'word': '未知商品'}])[0]['word']
             safe_g_name = clean_path_name(g_name)
             payer = request.form.get('payer') or '匿名'
 
-            # 1. 截取商品名前16位
+            # 截取商品名前16位
             short_g_name = safe_g_name[:16]
             
-            # 2. 仅截取发票号最后 4 位
+            # 仅截取发票号最后 4 位
             short_inv_num = inv_num[-4:] if len(inv_num) >= 4 else inv_num
             
-            # 3. 组合名称：姓名_前16位商品名_发票后4位
+            # 组合名称：姓名_前16位商品名_发票后4位
             base_folder_name = f"{payer}_{short_g_name}_{short_inv_num}"
             inv_dir = os.path.join('storage', base_folder_name)
             
-            # 核心拦截：如果文件夹已存在，说明该发票（或同名发票）已处理过
+            # 如果文件夹已存在，说明该发票（或同名发票）已处理过
             if os.path.exists(inv_dir):
                 flash(f'文件夹冲突：发票 {short_inv_num} 已存在，已自动跳过。', 'warning')
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
-                continue # 直接跳过，不执行后面的保存逻辑
+                continue
             
             os.makedirs(inv_dir, exist_ok=True)
             final_folder_name = os.path.basename(inv_dir)
 
-            # --- 数据库保存 ---
+            # 数据库保存
             new_inv = Invoice(
                 inv_num=inv_num,
                 inv_code=extract_val(data, 'InvoiceCode') or '',
@@ -246,7 +244,7 @@ def upload():
             db.session.add(new_inv)
             db.session.flush()
 
-            # --- 文件移动与TXT生成 ---
+            # 文件移动与TXT生成
             ext = os.path.splitext(file.filename)[1]
             os.rename(temp_path, os.path.join(inv_dir, f"发票{ext}"))
 
@@ -338,12 +336,12 @@ def delete_invoice(inv_id):
     result_ok = False
     if inv:
         try:
-            # 1. 物理删除文件夹
+            # 物理删除文件夹
             if inv.folder_path and os.path.exists(inv.folder_path):
                 import shutil
                 shutil.rmtree(inv.folder_path)
             
-            # 2. 数据库删除
+            # 数据库删除
             db.session.delete(inv)
             db.session.commit()
             result_ok = True
@@ -351,7 +349,7 @@ def delete_invoice(inv_id):
             db.session.rollback()
             print(f"删除失败: {e}")
 
-    # --- 关键修改：判断请求头 ---
+    # 判断请求头
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
               (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html)
     
@@ -405,7 +403,7 @@ def preview_attachment(inv_id):
         target = os.path.join(inv.folder_path, filename)
     if not os.path.exists(target):
         return 'Not found', 404
-    # 安全：只返回 storage 下的文件
+    # 只返回 storage 下的文件
     # 直接返回文件流，让浏览器处理（图片/ pdf 等）
     mime, _ = mimetypes.guess_type(target)
     return send_file(target, mimetype=mime or 'application/octet-stream')
@@ -424,7 +422,7 @@ def download_all():
     
     data = []
 
-    # helper: 格式化日期为 YYYY-MM-DD
+    # 格式化日期为 YYYY-MM-DD
     def fmt_date(s):
         if not s: return ''
         s = str(s).strip()
