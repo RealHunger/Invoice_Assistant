@@ -1,0 +1,5 @@
+baidu_aip==4.16.13
+Flask==3.1.2
+flask_sqlalchemy==3.1.1
+pandas==3.0.0
+pdf2image==1.17.0

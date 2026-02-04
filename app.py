@@ -216,11 +216,12 @@ def upload():
             base_folder_name = f"{payer}_{short_g_name}_{short_inv_num}"
             inv_dir = os.path.join('storage', base_folder_name)
             
-            # 4. 自动处理冲突（如果后4位撞了，自动加 _1, _2...）
-            counter = 1
-            while os.path.exists(inv_dir):
-                inv_dir = os.path.join('storage', f"{base_folder_name}_{counter}")
-                counter += 1
+            # 核心拦截：如果文件夹已存在，说明该发票（或同名发票）已处理过
+            if os.path.exists(inv_dir):
+                flash(f'文件夹冲突：发票 {short_inv_num} 已存在，已自动跳过。', 'warning')
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                continue # 直接跳过，不执行后面的保存逻辑
             
             os.makedirs(inv_dir, exist_ok=True)
             final_folder_name = os.path.basename(inv_dir)

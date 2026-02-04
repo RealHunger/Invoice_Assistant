@@ -7,4 +7,8 @@ BAIDU_CONFIG = {
 }
 
 # Poppler 路径配置
-POPPLER_PATH = r'D:\Document\Python_Project\fapiao\poppler-25.12.0\Library\bin'
+import os
+
+# 动态获取项目根目录
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+POPPLER_PATH = os.path.join(PROJECT_ROOT, 'poppler-25.12.0', 'Library', 'bin')
