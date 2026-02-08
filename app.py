@@ -110,26 +110,72 @@ def save_items_from_words(inv, words):
     db.session.commit()
 @app.route('/')
 def index():
-    # 使用 joinedload 预加载 items，减少数据库查询次数
-    invoices = Invoice.query.options(db.joinedload(Invoice.items)).order_by(Invoice.id.desc()).all()
+    # 只加载基本发票信息，不加载 items，减少初始数据量
+    invoices = Invoice.query.order_by(Invoice.id.desc()).all()
     
     for inv in invoices:
         inv.has_pay = False
         inv.has_order = False
-        inv.files_list = []
         if inv.folder_path and os.path.exists(inv.folder_path):
-            base_folder = os.path.basename(inv.folder_path)
             for f in os.listdir(inv.folder_path):
                 if f == '.trash': continue
                 if '支付' in f: inv.has_pay = True
                 if '订单' in f: inv.has_order = True
                 
-                protected = False
-                if f.startswith('发票') or f == f"{base_folder}.txt":
-                    protected = True
-                inv.files_list.append({'name': f, 'protected': protected})
-                
     return render_template('index.html', invoices=invoices)
+
+@app.route('/get_invoice_detail/<int:inv_id>')
+def get_invoice_detail(inv_id):
+    """AJAX 接口：动态加载发票详细信息"""
+    inv = Invoice.query.get(inv_id)
+    if not inv:
+        return jsonify({'ok': False, 'error': '发票不存在'}), 404
+    
+    # 获取文件列表
+    files_list = []
+    if inv.folder_path and os.path.exists(inv.folder_path):
+        base_folder = os.path.basename(inv.folder_path)
+        for f in os.listdir(inv.folder_path):
+            if f == '.trash': continue
+            protected = False
+            if f.startswith('发票') or f == f"{base_folder}.txt":
+                protected = True
+            files_list.append({'name': f, 'protected': protected})
+    
+    # 获取明细表（items）
+    items_data = []
+    for item in inv.items:
+        items_data.append({
+            'row': item.row,
+            'name': item.name,
+            'spec': item.spec,
+            'unit': item.unit,
+            'quantity': item.quantity,
+            'price': item.price,
+            'amount': item.amount,
+            'tax_rate': item.tax_rate,
+            'tax': item.tax
+        })
+    
+    return jsonify({
+        'ok': True,
+        'inv': {
+            'id': inv.id,
+            'seller': inv.seller,
+            'date': inv.date,
+            'good_name': inv.good_name,
+            'spec': inv.spec,
+            'unit': inv.unit,
+            'quantity': inv.quantity,
+            'price': inv.price,
+            'total': inv.total,
+            'payer': inv.payer,
+            'stu_id': inv.stu_id,
+            'bank_card': inv.bank_card
+        },
+        'items': items_data,
+        'files_list': files_list
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -541,6 +587,117 @@ def download_all():
     os.remove(excel_p)
     zip_buf.seek(0)
     return send_file(zip_buf, as_attachment=True, download_name="报销材料汇总.zip")
+
+@app.route('/rename_attachment/<int:inv_id>', methods=['POST'])
+def rename_attachment(inv_id):
+    """重命名附件"""
+    inv = Invoice.query.get(inv_id)
+    if not inv:
+        return jsonify({'ok': False, 'error': '发票不存在'}), 404
+    
+    old_name = request.form.get('old_name', '').strip()
+    new_name = request.form.get('new_name', '').strip()
+    
+    if not old_name or not new_name:
+        return jsonify({'ok': False, 'error': '文件名不能为空'})
+    
+    old_path = os.path.join(inv.folder_path, old_name)
+    new_path = os.path.join(inv.folder_path, new_name)
+    
+    # 检查原文件是否存在
+    if not os.path.exists(old_path):
+        return jsonify({'ok': False, 'error': '原文件不存在'})
+    
+    # 检查新文件名是否已存在
+    if os.path.exists(new_path):
+        return jsonify({'ok': False, 'error': '新文件名已存在'})
+    
+    try:
+        os.rename(old_path, new_path)
+        
+        # 重新扫描文件列表并更新状态
+        files_list = []
+        has_pay = False
+        has_order = False
+        if os.path.exists(inv.folder_path):
+            base_folder = os.path.basename(inv.folder_path)
+            for f in os.listdir(inv.folder_path):
+                if f == '.trash': continue
+                if '支付' in f: has_pay = True
+                if '订单' in f: has_order = True
+                
+                protected = False
+                if f.startswith('发票') or f == f"{base_folder}.txt":
+                    protected = True
+                files_list.append({'name': f, 'protected': protected})
+        
+        return jsonify({
+            'ok': True,
+            'files_list': files_list,
+            'has_pay': has_pay,
+            'has_order': has_order
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'重命名失败: {str(e)}'})
+
+@app.route('/upload_extra/<int:inv_id>', methods=['POST'])
+def upload_extra(inv_id):
+    """上传发票的额外附件（支付截图、订单截图等），返回 JSON"""
+    inv = Invoice.query.get(inv_id)
+    if not inv:
+        return jsonify({'ok': False, 'error': '发票不存在'}), 404
+    
+    # 处理上传的文件（前端已经自动重命名）
+    files = request.files.getlist('extra_files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({'ok': False, 'error': '请选择文件'})
+    
+    success_count = 0
+    error_msgs = []
+    for file in files:
+        if file.filename == '':
+            continue
+        try:
+            # 使用前端提供的重命名后的文件名
+            filename = file.filename
+            target_path = os.path.join(inv.folder_path, filename)
+            
+            # 若文件已存在，加上时间戳区分
+            if os.path.exists(target_path):
+                import time
+                name, ext = os.path.splitext(filename)
+                filename = f"{name}_{int(time.time())}{ext}"
+                target_path = os.path.join(inv.folder_path, filename)
+            
+            file.save(target_path)
+            success_count += 1
+        except Exception as e:
+            error_msgs.append(f'{file.filename}: {str(e)}')
+    
+    # 重新读取该发票的文件列表
+    files_list = []
+    has_pay = False
+    has_order = False
+    if inv.folder_path and os.path.exists(inv.folder_path):
+        base_folder = os.path.basename(inv.folder_path)
+        for f in os.listdir(inv.folder_path):
+            if f == '.trash': continue
+            if '支付' in f: has_pay = True
+            if '订单' in f: has_order = True
+            
+            protected = False
+            if f.startswith('发票') or f == f"{base_folder}.txt":
+                protected = True
+            files_list.append({'name': f, 'protected': protected})
+    
+    return jsonify({
+        'ok': True,
+        'success_count': success_count,
+        'errors': error_msgs,
+        'files_list': files_list,
+        'has_pay': has_pay,
+        'has_order': has_order
+    })
 
 @app.route('/clear_all', methods=['POST'])
 def clear_all():
